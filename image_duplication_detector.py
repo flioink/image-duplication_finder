@@ -2,14 +2,46 @@ import os
 import shutil
 import sys
 import hashlib
+import traceback
+from multiprocessing.pool import worker
 
 from PIL import Image
 import imagehash
 
 # pyqt imports
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, \
     QFileDialog, QGroupBox, QRadioButton, QProgressBar
+
+
+class WorkerSignals(QObject):
+
+    finished = pyqtSignal()
+    error = pyqtSignal(tuple)
+    result = pyqtSignal(object)
+    progress = pyqtSignal(float)
+
+class Worker(QRunnable):
+
+    def __init__(self, fn, *args, **kwargs):
+        super().__init__()
+        self.fn = fn
+        self.args = args
+        self.kwargs = kwargs
+        self.signals = WorkerSignals()
+        # Add the callback to our kwargs
+        # self.kwargs["progress_callback"] = self.signals.progress
+
+    @pyqtSlot()
+    def run(self):
+        try:
+            if "progress_callback" in self.kwargs:
+                result = self.fn(*self.args, progress_callback=self.kwargs["progress_callback"])
+            else:
+                result = self.fn(*self.args)
+            self.signals.finished.emit()
+        except Exception as e:
+            print(f"Worker crashed: {e}")
 
 
 class DuplicateImagesDetector(QWidget):
@@ -30,6 +62,7 @@ class DuplicateImagesDetector(QWidget):
         self.master_layout = QVBoxLayout()
 
         self.init_ui()
+        self.threadpool = QThreadPool()
 
 
     def init_ui(self):
@@ -208,6 +241,7 @@ class DuplicateImagesDetector(QWidget):
             self.method_group.setEnabled(False)
 
     def load_file_paths(self):
+        print("loading file paths")
         self.source_files.clear()  # Clear list before adding new entries
 
         files = [f for f in os.listdir(self.source_folder) if os.path.isfile(os.path.join(self.source_folder, f))]
@@ -218,23 +252,41 @@ class DuplicateImagesDetector(QWidget):
                 self.source_files.append(os.path.join(self.source_folder, file))
 
     # execute button
+    # Execute button
     def execute_search(self):
 
-        if (os.path.isdir(self.source_folder) and os.path.isdir(self.dest_folder)) and self.dest_folder != self.source_folder:
+        if (os.path.isdir(self.source_folder) and os.path.isdir(self.dest_folder)) and \
+                self.dest_folder != self.source_folder:
 
             self.load_file_paths()
 
+            if not self.source_files:
+                print("No files found! Exiting execution.")
+                self.feedback_info_label.setText("No images found in the source folder.")
+                return
+
             match self.selected_method:
                 case "Exact Match":
-                    self.exact_match_hashing()
-
+                    print("Starting Exact Match Hashing")  # Debugging print
+                    worker = Worker(self.exact_match_hashing)
                 case "Perceptual Hashing":
-                    self.perceptual_hashing()
-
+                    print("Starting Perceptual Hashing")  # Debugging print
+                    worker = Worker(self.perceptual_hashing)
                 case "Histogram Comparison":
-                    self.histogram_comparison()
+                    print("Starting Histogram Comparison")  # Debugging print
+                    worker = Worker(self.histogram_comparison)
+                    
+                case _:
+                    print("Error: No valid method selected!")  # Debugging print
+                    self.feedback_info_label.setText("Invalid comparison method selected.")
+                    return
 
-            self.find_duplicates()
+            worker.signals.progress.connect(self.update_progress_bar)
+            worker.signals.finished.connect(self.find_duplicates)
+
+            print("Starting worker thread...")
+            self.threadpool.start(worker)
+            print("Worker started.")
 
         else:
             self.feedback_info_label.setText("Source and destination folder must be different!")
@@ -244,7 +296,7 @@ class DuplicateImagesDetector(QWidget):
 
 
 
-    def exact_match_hashing(self):
+    def exact_match_hashing(self, progress_callback=None):
         self.img_hashes_dict.clear()
         self.duplicates_found = False
         # convert images to hashes and store in list
@@ -252,13 +304,29 @@ class DuplicateImagesDetector(QWidget):
             print("No images found. Please select a valid folder.")
             return  # Exit early if there's nothing to process
 
-        for file in self.source_files:
-            img_hash = self.compute_file_hash(file)
-            # sets default value to a key - a list in this case and then updates value if key is found again
-            self.img_hashes_dict.setdefault(img_hash, []).append(file)
+        try:
+            print("Exact Match Hashing started")
+
+            print(f"exact_match_hashing started with progress_callback: {progress_callback}")
+
+            total_files = len(self.source_files)
+
+            for idx, file in enumerate(self.source_files):
+                img_hash = self.compute_file_hash(file)
+                # sets default value to a key - a list in this case and then updates value if key is found again
+                self.img_hashes_dict.setdefault(img_hash, []).append(file)
+                # Calculate and emit progress (as percentage)
+                if progress_callback:
+                    progress = (idx + 1) / total_files * 100
+                    progress_callback.emit(progress)
+                    print(f"progress: {progress}")
+
+        except Exception as e:
+            print(f"Error in exact_match_hashing: {e}")
 
 
-    def perceptual_hashing(self):
+    def perceptual_hashing(self, progress_callback=None):
+        print("Hashing")
         self.img_hashes_dict.clear()
         self.duplicates_found = False
         # convert images to hashes and store in list
@@ -279,7 +347,7 @@ class DuplicateImagesDetector(QWidget):
 
 
 
-    def histogram_comparison(self):
+    def histogram_comparison(self, progress_callback=None):
         self.img_hashes_dict.clear()
         self.duplicates_found = False
         # convert images to hashes and store in list
@@ -305,7 +373,7 @@ class DuplicateImagesDetector(QWidget):
 
 
     def move_duplicates(self):
-
+        print("move duplicates")
         moved_files = []
         moved_number = 0
 
@@ -335,6 +403,9 @@ class DuplicateImagesDetector(QWidget):
             while chunk := f.read(8192):  # Read in chunks for efficiency
                 hasher.update(chunk)
         return hasher.hexdigest()
+
+    def update_progress_bar(self, value):
+        self.progress_bar.setValue(value)
 
 
 if __name__ == "__main__":
