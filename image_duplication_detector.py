@@ -38,8 +38,8 @@ class Worker(QRunnable):
             result = self.fn(*self.args, **self.kwargs)
         except Exception:
             traceback.print_exc()
-            exctype, value = sys.exc_info()[:2]
-            self.signals.error.emit((exctype, value, traceback.format_exc()))
+            exception_type, value = sys.exc_info()[:2]
+            self.signals.error.emit((exception_type, value, traceback.format_exc()))
         else:
             self.signals.result.emit(result)
         finally:
@@ -168,8 +168,23 @@ class DuplicateImagesDetector(QWidget):
                             QPushButton{
                                 font-size: 18px;
                                 font-weight: bold;
-                            }                                            
+                            }
+                            
+                            QProgressBar {
+                                border: 2px solid gray;
+                                border-radius: 5px;
+                                text-align: center; /* Puts the percentage text in the center */
+                                font-size: 16px;
+                                color: black;
+                                background-color: lightgray; /* Background behind the bar */
+                            }
+                                
+                            QProgressBar::chunk {
+                                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #4caf50, stop:1 #8bc34a);
+                            }
 
+}
 
                             """)
 
@@ -199,6 +214,7 @@ class DuplicateImagesDetector(QWidget):
         if not (os.path.exists(path) and os.path.isdir(path)):
             self.source_info_label.setText("Invalid source folder.")
             self.source_info_label.setStyleSheet("color: red; font-weight: bold;")
+            self.method_group.setEnabled(False)
             print("Invalid source folder.")
             return
 
@@ -216,8 +232,9 @@ class DuplicateImagesDetector(QWidget):
 
         path = QFileDialog.getExistingDirectory(self, "Select Folder")
         if not (os.path.exists(path) and os.path.isdir(path)):
-            self.source_info_label.setText("Invalid destination folder.")
-            self.source_info_label.setStyleSheet("color: red; font-weight: bold;")
+            self.dest_info_label.setText("Invalid destination folder.")
+            self.dest_info_label.setStyleSheet("color: red; font-weight: bold;")
+            self.method_group.setEnabled(False)
             print("Invalid destination folder.")
             return
 
@@ -279,7 +296,7 @@ class DuplicateImagesDetector(QWidget):
                 case "Histogram Comparison":
                     print("Starting Histogram Comparison")
                     worker = Worker(self.histogram_comparison)
-                    
+
 
                 case _:
                     print("Error: No valid method selected!")
