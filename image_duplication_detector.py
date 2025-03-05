@@ -3,11 +3,14 @@ import shutil
 import sys
 import hashlib
 import traceback
+from logging import exception
 
+import numpy as np
 from PIL import Image
 import imagehash
 
 # pyqt imports
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, \
     QFileDialog, QGroupBox, QRadioButton, QProgressBar
@@ -50,7 +53,8 @@ class DuplicateImagesDetector(QWidget):
         super().__init__()
         # set window name and geometry
         self.setWindowTitle("Duplicated Image Detector")
-        self.resize(400, 300)
+        self.resize(400, 400)
+        self.setFixedSize(self.size())
         self.selected_method = "Exact Match"
 
         self.source_folder = ""
@@ -79,6 +83,7 @@ class DuplicateImagesDetector(QWidget):
         # source info
         self.source_info_layout = QHBoxLayout()
         self.source_info_label = QLabel("Not selected yet")
+        self.source_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
         self.source_info_label.setStyleSheet("color: yellow; font-weight: bold;")
         self.source_info_layout.addWidget(self.source_info_label)
 
@@ -86,6 +91,7 @@ class DuplicateImagesDetector(QWidget):
         self.set_dest_layout = QHBoxLayout()
         self.set_dest_layout.setObjectName("dest_layout")
         self.dest_label = QLabel("Select output folder")
+
         self.dest_button = QPushButton("Destination")
         self.set_dest_layout.addWidget(self.dest_label)
         self.set_dest_layout.addWidget(self.dest_button)
@@ -93,6 +99,7 @@ class DuplicateImagesDetector(QWidget):
         # destination info
         self.dest_info_layout = QHBoxLayout()
         self.dest_info_label = QLabel("Not selected yet")
+        self.dest_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
         self.dest_info_label.setStyleSheet("color: yellow; font-weight: bold;")
         self.dest_info_layout.addWidget(self.dest_info_label)
 
@@ -100,16 +107,16 @@ class DuplicateImagesDetector(QWidget):
         self.method_group = QGroupBox("Comparison Method") # group box for the radio buttons
         self.method_layout = QVBoxLayout()
         # radio buttons
-        self.exact_match_radio = QRadioButton("Exact Match - for finding exact copies. Fast")
-        self.hashing_radio = QRadioButton("Perceptual Hashing - for same or similar images. Slower")
-        self.histogram_radio = QRadioButton("Histogram Comparison")
+        self.exact_match_radio = QRadioButton("Exact Match – Finds identical copies. Fast.")
+        self.hashing_radio = QRadioButton("Perceptual Hashing – Detects similar images. Slower.")
+        self.mean_color = QRadioButton("Mean Color Hash – Compares overall color. Slow.")
 
         self.exact_match_radio.setChecked(True)  # Default selection
         self.method_group.setDisabled(True)
 
         self.method_layout.addWidget(self.exact_match_radio)
         self.method_layout.addWidget(self.hashing_radio)
-        self.method_layout.addWidget(self.histogram_radio)
+        self.method_layout.addWidget(self.mean_color)
 
         self.method_group.setLayout(self.method_layout)
 
@@ -128,7 +135,6 @@ class DuplicateImagesDetector(QWidget):
         self.progress_bar.setValue(0)
         self.feedback_layout.addWidget(self.feedback_info_label)
         self.feedback_layout.addWidget(self.progress_bar)
-
 
         # add to master layout
         self.master_layout.addLayout(self.set_source_layout)
@@ -183,6 +189,9 @@ class DuplicateImagesDetector(QWidget):
                                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                                 stop:0 #4caf50, stop:1 #8bc34a);
                             }
+                            
+                            
+                            
 
 }
 
@@ -195,7 +204,7 @@ class DuplicateImagesDetector(QWidget):
         # connect radio buttons
         self.exact_match_radio.toggled.connect(self.update_method)
         self.hashing_radio.toggled.connect(self.update_method)
-        self.histogram_radio.toggled.connect(self.update_method)
+        self.mean_color.toggled.connect(self.update_method)
 
 
     def update_method(self):
@@ -203,8 +212,8 @@ class DuplicateImagesDetector(QWidget):
             self.selected_method = "Exact Match"
         elif self.hashing_radio.isChecked():
             self.selected_method = "Perceptual Hashing"
-        elif self.histogram_radio.isChecked():
-            self.selected_method = "Histogram Comparison"
+        elif self.mean_color.isChecked():
+            self.selected_method = "Mean Color"
 
 
     def open_source_dir(self):
@@ -221,8 +230,8 @@ class DuplicateImagesDetector(QWidget):
         self.source_folder = path
         self.feedback_info_label.clear()
 
-
         self.source_info_label.setText(f"Source: {self.source_folder}")
+
         self.source_info_label.setStyleSheet("color: green; font-weight: bold;")
         self.set_method_group_status()
         print(self.source_folder)
@@ -293,9 +302,9 @@ class DuplicateImagesDetector(QWidget):
                     worker = Worker(self.perceptual_hashing)
 
 
-                case "Histogram Comparison":
-                    print("Starting Histogram Comparison")
-                    worker = Worker(self.histogram_comparison)
+                case "Mean Color":
+                    print("Mean Color Hashing")
+                    worker = Worker(self.mean_color_hash)
 
 
                 case _:
@@ -340,11 +349,12 @@ class DuplicateImagesDetector(QWidget):
                 img_hash = self.compute_file_hash(file)
                 # sets default value to a key - a list in this case and then updates value if key is found again
                 self.img_hashes_dict.setdefault(img_hash, []).append(file)
-                # Calculate and emit progress (as percentage)
+                self.feedback_info_label.setText(f"Checking {idx + 1} of {total_files} files.")
+                # Calculate and emit progress
                 if progress_callback:
                     progress = (idx + 1) / total_files * 100
                     progress_callback.emit(round(progress, 2))
-                    print(f"progress: {round(progress, 2)}")
+                    #print(f"progress: {round(progress, 2)}")
 
 
         except Exception as e:
@@ -372,7 +382,7 @@ class DuplicateImagesDetector(QWidget):
                 if progress_callback:
                     progress = (idx + 1) / total_files * 100
                     progress_callback.emit(round(progress, 2))
-                    print(f"progress: {round(progress, 2)}")
+                    #print(f"progress: {round(progress, 2)}")
 
         except Exception as e:
             print(f"Error processing {file}: {e}")
@@ -380,20 +390,40 @@ class DuplicateImagesDetector(QWidget):
 
 
 
-    def histogram_comparison(self, progress_callback=None):
+    def mean_color_hash(self, progress_callback=None):
         self.img_hashes_dict.clear()
         self.duplicates_found = False
         # convert images to hashes and store in list
         if not self.source_files:
             print("No images found. Please select a valid folder.")
             return  # Exit early if there's nothing to process
+        total_files = len(self.source_files)
 
-        for file in self.source_files:
-            with Image.open(file) as img:
-                img_hash = str(imagehash.phash(img))
-            # sets default value to a key - a list in this case and then updates value if key is found again
-            self.img_hashes_dict.setdefault(img_hash, []).append(file)
+        for idx, file in enumerate(self.source_files):
+            try:
+                img_hash = self.calculate_mean_color_hash(file)
+                # sets default value to a key - a list in this case and then updates value if key is found again
+                self.img_hashes_dict.setdefault(img_hash, []).append(file)
+                if progress_callback:
+                    progress = (idx + 1) / total_files * 100
+                    progress_callback.emit(round(progress, 2))
+                    #print(f"progress: {round(progress, 2)}")
 
+            except Exception as e:
+                print(f"Error processing {file}: {e}")
+                self.feedback_info_label.setText(f"Error processing {file}: {e}")
+
+
+    @staticmethod
+    def calculate_mean_color_hash(image_path):
+        """simple hash based on the mean color of an image."""
+        img = Image.open(image_path).convert("RGB")
+        img = img.resize((64, 64))  # Resize to normalize data
+        mean_color = np.array(img).mean(axis=(0, 1))  # (R, G, B)
+
+        # Convert RGB mean to a simple 6-character hex string
+        hash_value = f"{int(mean_color[0]):02X}{int(mean_color[1]):02X}{int(mean_color[2]):02X}"
+        return hash_value  # Example: "7BC896"
 
 
 
@@ -445,9 +475,10 @@ class DuplicateImagesDetector(QWidget):
     ####################################################################################################################
     @pyqtSlot(float)
     def update_progress_bar(self, value):
-
-        print(f"Updating progress bar: {value}")
+        #print(f"Updating progress bar: {value}")
         self.progress_bar.setValue(int(value))
+
+
 
 
 if __name__ == "__main__":
