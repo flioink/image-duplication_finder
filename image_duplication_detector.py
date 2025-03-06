@@ -1,3 +1,4 @@
+import datetime
 import os
 import shutil
 import sys
@@ -7,22 +8,20 @@ import numpy as np
 from PIL import Image
 import imagehash
 
-# pyqt imports
-# from PyQt6.QtGui import QFontMetrics
-from PyQt6.QtCore import Qt, QObject, QRunnable, QThreadPool, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, \
     QFileDialog, QGroupBox, QRadioButton, QProgressBar
 
 
 class WorkerSignals(QObject):
-
     finished = pyqtSignal()
     error = pyqtSignal(tuple)
     result = pyqtSignal(object)
     progress = pyqtSignal(float)
 
-class Worker(QRunnable):
 
+class Worker(QRunnable):
     def __init__(self, fn, *args, **kwargs):
         super().__init__()
         self.fn = fn
@@ -31,7 +30,6 @@ class Worker(QRunnable):
         self.signals = WorkerSignals()
         # Add the callback to our kwargs
         self.kwargs["progress_callback"] = self.signals.progress
-
 
     @pyqtSlot()
     def run(self):
@@ -46,12 +44,14 @@ class Worker(QRunnable):
         finally:
             self.signals.finished.emit()
 
+
 class DuplicateImagesDetector(QWidget):
     def __init__(self):
         super().__init__()
         # set window name and geometry
         self.setWindowTitle("Duplicated Image Detector")
         self.resize(400, 400)
+        self.setWindowIcon(QIcon("compare.ico"))
         self.setFixedSize(self.size())
         self.selected_method = "Exact Match"
 
@@ -61,6 +61,8 @@ class DuplicateImagesDetector(QWidget):
         self.source_files = []
         self.img_hashes_dict = {}
         self.duplicates_found = False
+        self.start_time = None
+        self.end_time = None
 
         self.master_layout = QVBoxLayout()
 
@@ -100,6 +102,7 @@ class DuplicateImagesDetector(QWidget):
         self.dest_info_label = QLabel("Not selected yet")
         self.dest_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
         self.dest_info_label.setStyleSheet("color: yellow; font-weight: bold;")
+        self.dest_info_label.setToolTip(self.source_folder if self.source_folder else "Select the target path")
         self.dest_info_layout.addWidget(self.dest_info_label)
 
         # comparison method selection
@@ -143,20 +146,26 @@ class DuplicateImagesDetector(QWidget):
         self.master_layout.addLayout(self.dest_info_layout)
         # align master layout to top
         self.master_layout.addWidget(self.method_group)
-
         # add execute button to group layout
         self.method_layout.addLayout(self.execute_comparison_layout)
-
         # add the feedback layout
         self.master_layout.addLayout(self.feedback_layout)
+
+        # search result details
+        self.search_result_info_layout = QVBoxLayout()
+        self.search_result_info_label = QLabel()
+        self.search_result_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.search_result_info_layout.addWidget(self.search_result_info_label)
+        self.master_layout.addLayout(self.search_result_info_layout)
 
         # add master layout to the window
         self.setLayout(self.master_layout)
 
+
+
         self.master_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         self.style()
-
         self.event_handler()
 
 
@@ -217,7 +226,6 @@ class DuplicateImagesDetector(QWidget):
 
 
     def open_source_dir(self):
-
         path = QFileDialog.getExistingDirectory(self, "Select Folder")
 
         if not (os.path.exists(path) and os.path.isdir(path)):
@@ -282,7 +290,6 @@ class DuplicateImagesDetector(QWidget):
 
         if (os.path.isdir(self.source_folder) and os.path.isdir(self.dest_folder)) and \
                 self.dest_folder != self.source_folder:
-
             self.load_file_paths()
             self.feedback_info_label.clear()
             self.feedback_info_label.setStyleSheet("color: orange; font-weight: bold;")
@@ -292,36 +299,11 @@ class DuplicateImagesDetector(QWidget):
                 self.feedback_info_label.setText("No images found in the source folder.")
                 return
 
-            match self.selected_method:
-                case "Exact Match":
-                    print("Starting Exact Match Hashing")
-                    worker = Worker(self.exact_match_hashing)
-
-
-                case "Perceptual Hashing":
-                    print("Starting Perceptual Hashing")
-                    worker = Worker(self.perceptual_hashing)
-
-
-                case "Mean Color":
-                    print("Mean Color Hashing")
-                    worker = Worker(self.mean_color_hash)
-
-
-                case _:
-                    print("Error: No valid method selected!")
-                    self.feedback_info_label.setText("Invalid comparison method selected.")
-                    return
-
-            worker.signals.progress.connect(self.update_progress_bar)
-            self.method_group.setEnabled(False)
-
-            worker.signals.finished.connect(self.find_duplicates)
-
-
-            print("Starting worker thread...")
-            self.threadpool.start(worker)
-            print("Worker started.")
+            self.set_worker_thread()
+            # clear previous search result details
+            self.search_result_info_label.clear()
+            # get the start of the search time
+            self.start_time = datetime.datetime.now()
 
         else:
             self.feedback_info_label.setText("Source and destination folder must be different!")
@@ -329,7 +311,40 @@ class DuplicateImagesDetector(QWidget):
             print("Warning! Destination folder not found!")
             return
 
-    # exact matching
+
+    def set_worker_thread(self):
+        self.worker = self.set_search_method()  # create worker based on selected search method
+
+        self.worker.signals.progress.connect(self.update_progress_bar)
+        self.method_group.setEnabled(False)
+        self.worker.signals.finished.connect(self.find_duplicates)
+
+        print("Starting worker thread...")
+        self.threadpool.start(self.worker)
+        print("Worker started.")
+
+    def set_search_method(self):
+        match self.selected_method:
+            case "Exact Match":
+                print("Starting Exact Match Hashing")
+                worker = Worker(self.exact_match_hashing)
+
+            case "Perceptual Hashing":
+                print("Starting Perceptual Hashing")
+                worker = Worker(self.perceptual_hashing)
+
+            case "Mean Color":
+                print("Mean Color Hashing")
+                worker = Worker(self.mean_color_hash)
+
+            case _:
+                print("Error: No valid method selected!")
+                self.feedback_info_label.setText("Invalid comparison method selected.")
+                return
+
+        return worker
+
+    # exact hash matching
     ####################################################################################################################
     def exact_match_hashing(self, progress_callback=None):
         self.img_hashes_dict.clear()
@@ -361,6 +376,15 @@ class DuplicateImagesDetector(QWidget):
         except Exception as e:
             print(f"Error in exact_match_hashing: {e}")
 
+    # compute hash
+    ####################################################################################################################
+    @staticmethod
+    def compute_file_hash(filepath):  # hashing files
+        hasher = hashlib.sha256()  # Or hashlib.md5()
+        with open(filepath, "rb") as f:
+            while chunk := f.read(8192):  # Read in chunks for efficiency
+                hasher.update(chunk)
+        return hasher.hexdigest()
 
     def perceptual_hashing(self, progress_callback=None):
         print("Hashing")
@@ -369,7 +393,7 @@ class DuplicateImagesDetector(QWidget):
         # convert images to hashes and store in list
         if not self.source_files:
             print("No images found. Please select a valid folder.")
-            return  # Exit early if there's nothing to process
+            return  # exit if nothing to process
 
         total_files = len(self.source_files)
 
@@ -384,7 +408,6 @@ class DuplicateImagesDetector(QWidget):
                 if progress_callback:
                     progress = (idx + 1) / total_files * 100
                     progress_callback.emit(round(progress, 2))
-                    #print(f"progress: {round(progress, 2)}")
 
         except Exception as e:
             print(f"Error processing {file}: {e}")
@@ -453,6 +476,7 @@ class DuplicateImagesDetector(QWidget):
                         moved_files.append(f)
 
         self.method_group.setEnabled(True)
+        self.estimate_search_time()
 
         if not self.duplicates_found:
             print("No duplicates found.")
@@ -464,15 +488,18 @@ class DuplicateImagesDetector(QWidget):
             self.feedback_info_label.setText(f"{moved_number} duplicates found.")
             self.feedback_info_label.setStyleSheet("color: cyan; font-weight: bold;")
 
-    # compute hash
+
+    # calculate time for current search
     ####################################################################################################################
-    @staticmethod
-    def compute_file_hash(filepath): # hashing files
-        hasher = hashlib.sha256()  # Or hashlib.md5() if you prefer
-        with open(filepath, "rb") as f:
-            while chunk := f.read(8192):  # Read in chunks for efficiency
-                hasher.update(chunk)
-        return hasher.hexdigest()
+    def estimate_search_time(self):
+        self.end_time = datetime.datetime.now()
+        # print(f"Started at: {self.start_time}, ended at: {self.end_time}")
+
+        # calculate the time the search took
+        elapsed_time = self.end_time - self.start_time
+        formatted_time = str(elapsed_time).split(".")[0]
+        print(f"Search time: {formatted_time}")
+        self.search_result_info_label.setText(f"Search time: {formatted_time} for {len(self.source_files)} files.")
 
     # progress bar
     ####################################################################################################################
@@ -482,10 +509,8 @@ class DuplicateImagesDetector(QWidget):
         self.progress_bar.setValue(int(value))
 
 
-
-
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
+    app = QApplication([])
     detector = DuplicateImagesDetector()
     detector.show()
     sys.exit(app.exec())
