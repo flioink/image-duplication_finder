@@ -83,9 +83,10 @@ class DuplicateImagesDetector(QWidget):
         # source info
         self.source_info_layout = QHBoxLayout()
         self.source_info_label = QLabel("Not selected yet")
+        self.source_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.source_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
         self.source_info_label.setStyleSheet("color: yellow; font-weight: bold;")
-        self.source_info_label.setToolTip(self.source_folder if self.source_folder else "Select the source path")
+        self.source_info_label.setToolTip("Selected source path")
         self.source_info_layout.addWidget(self.source_info_label)
 
         # destination layout
@@ -100,9 +101,10 @@ class DuplicateImagesDetector(QWidget):
         # destination info
         self.dest_info_layout = QHBoxLayout()
         self.dest_info_label = QLabel("Not selected yet")
+        self.dest_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dest_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
         self.dest_info_label.setStyleSheet("color: yellow; font-weight: bold;")
-        self.dest_info_label.setToolTip(self.source_folder if self.source_folder else "Select the target path")
+        self.dest_info_label.setToolTip("Selected target path")
         self.dest_info_layout.addWidget(self.dest_info_label)
 
         # comparison method selection
@@ -238,9 +240,15 @@ class DuplicateImagesDetector(QWidget):
         self.source_folder = path
         self.feedback_info_label.clear()
 
-        self.source_info_label.setText(f"Source: {self.source_folder}")
+        # truncate path if too long
+        if len(self.source_folder) < 39:
+            self.source_info_label.setText(f"{self.source_folder}")
+        else:
+            trunc = f"{self.source_folder[:5]}...{os.path.sep}{os.path.basename(self.source_folder)}"
+            self.source_info_label.setText(f"{trunc}")
 
         self.source_info_label.setStyleSheet("color: green; font-weight: bold;")
+        self.source_info_label.setToolTip(self.source_folder) # set tooltip with full path
         self.set_method_group_status()
         print(self.source_folder)
 
@@ -258,8 +266,14 @@ class DuplicateImagesDetector(QWidget):
         self.dest_folder = path
         self.feedback_info_label.clear()
 
-        self.dest_info_label.setText(f"Destination: {self.dest_folder}")
+        if len(self.dest_folder) < 39:
+            self.dest_info_label.setText(f"{self.dest_folder}")
+        else:
+            trunc = f"{self.dest_folder[:5]}...{os.path.sep}{os.path.basename(self.dest_folder)}"
+            self.dest_info_label.setText(f"{trunc}")
+
         self.dest_info_label.setStyleSheet("color: green; font-weight: bold;")
+        self.dest_info_label.setToolTip(self.dest_folder)
 
         self.set_method_group_status()
         print(self.dest_folder)
