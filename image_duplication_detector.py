@@ -244,7 +244,7 @@ class DuplicateImagesDetector(QWidget):
         if len(self.source_folder) < 39:
             self.source_info_label.setText(f"{self.source_folder}")
         else:
-            trunc = f"{self.source_folder[:5]}...{os.path.sep}{os.path.basename(self.source_folder)}"
+            trunc = f"{self.source_folder[:18]}...{os.path.sep}{os.path.basename(self.source_folder)[:18]}"
             self.source_info_label.setText(f"{trunc}")
 
         self.source_info_label.setStyleSheet("color: green; font-weight: bold;")
@@ -269,7 +269,7 @@ class DuplicateImagesDetector(QWidget):
         if len(self.dest_folder) < 39:
             self.dest_info_label.setText(f"{self.dest_folder}")
         else:
-            trunc = f"{self.dest_folder[:5]}...{os.path.sep}{os.path.basename(self.dest_folder)}"
+            trunc = f"{self.dest_folder[:18]}...{os.path.sep}{os.path.basename(self.dest_folder)[:18]}"
             self.dest_info_label.setText(f"{trunc}")
 
         self.dest_info_label.setStyleSheet("color: green; font-weight: bold;")
@@ -320,7 +320,7 @@ class DuplicateImagesDetector(QWidget):
             self.start_time = datetime.datetime.now()
 
         else:
-            self.feedback_info_label.setText("Source and destination folder must be different!")
+            self.feedback_info_label.setText("Source or destination folder invalid!")
             self.feedback_info_label.setStyleSheet("color: red; font-weight: bold;")
             print("Warning! Destination folder not found!")
             return
