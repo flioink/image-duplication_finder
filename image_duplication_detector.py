@@ -1,4 +1,5 @@
 import datetime
+import json
 import os
 import shutil
 import sys
@@ -31,6 +32,8 @@ class Worker(QRunnable):
         # Add the callback to our kwargs
         self.kwargs["progress_callback"] = self.signals.progress
 
+        self.is_running = True
+
     @pyqtSlot()
     def run(self):
         try:
@@ -44,11 +47,16 @@ class Worker(QRunnable):
         finally:
             self.signals.finished.emit()
 
+    def stop(self):
+        """Stop the worker thread."""
+        self.is_running = False
+
 
 class DuplicateImagesDetector(QWidget):
     def __init__(self):
         super().__init__()
         # set window name and geometry
+        self.settings_file = "settings.json"
         self.setWindowTitle("Duplicated Image Detector")
         self.resize(400, 400)
         self.setWindowIcon(QIcon("compare.ico"))
@@ -68,6 +76,7 @@ class DuplicateImagesDetector(QWidget):
 
         self.init_ui()
         self.threadpool = QThreadPool()
+        self.check_folder_paths()
 
 
     def init_ui(self):
@@ -85,7 +94,7 @@ class DuplicateImagesDetector(QWidget):
         self.source_info_label = QLabel("Not selected yet")
         self.source_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.source_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
-        self.source_info_label.setStyleSheet("color: yellow; font-weight: bold;")
+        self.source_info_label.setStyleSheet("color: green; font-weight: bold;")
         self.source_info_label.setToolTip("Selected source path")
         self.source_info_layout.addWidget(self.source_info_label)
 
@@ -103,7 +112,7 @@ class DuplicateImagesDetector(QWidget):
         self.dest_info_label = QLabel("Not selected yet")
         self.dest_info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.dest_info_label.setMaximumWidth(400)  # set max width on the info label to prevent UI stretching
-        self.dest_info_label.setStyleSheet("color: yellow; font-weight: bold;")
+        self.dest_info_label.setStyleSheet("color: green; font-weight: bold;")
         self.dest_info_label.setToolTip("Selected target path")
         self.dest_info_layout.addWidget(self.dest_info_label)
 
@@ -240,16 +249,13 @@ class DuplicateImagesDetector(QWidget):
         self.source_folder = path
         self.feedback_info_label.clear()
 
-        # truncate path if too long
-        if len(self.source_folder) < 39:
-            self.source_info_label.setText(f"{self.source_folder}")
-        else:
-            trunc = f"{self.source_folder[:18]}...{os.path.sep}{os.path.basename(self.source_folder)[:18]}"
-            self.source_info_label.setText(f"{trunc}")
+        # truncate path if needed
+        self.source_info_label.setText(self.path_truncation(self.source_folder))
 
         self.source_info_label.setStyleSheet("color: green; font-weight: bold;")
         self.source_info_label.setToolTip(self.source_folder) # set tooltip with full path
         self.set_method_group_status()
+        self.save_paths()
         print(self.source_folder)
 
 
@@ -266,17 +272,22 @@ class DuplicateImagesDetector(QWidget):
         self.dest_folder = path
         self.feedback_info_label.clear()
 
-        if len(self.dest_folder) < 39:
-            self.dest_info_label.setText(f"{self.dest_folder}")
-        else:
-            trunc = f"{self.dest_folder[:18]}...{os.path.sep}{os.path.basename(self.dest_folder)[:18]}"
-            self.dest_info_label.setText(f"{trunc}")
+        self.dest_info_label.setText(self.path_truncation(self.dest_folder))
 
         self.dest_info_label.setStyleSheet("color: green; font-weight: bold;")
         self.dest_info_label.setToolTip(self.dest_folder)
 
         self.set_method_group_status()
+        self.save_paths()
         print(self.dest_folder)
+
+    @staticmethod
+    def path_truncation(path):
+        if len(path) < 39:
+            return path
+        else:
+            trunc = f"{path[:18]}...{os.path.sep}{os.path.basename(path)[:18]}"
+            return trunc
 
 
     def set_method_group_status(self):
@@ -411,8 +422,8 @@ class DuplicateImagesDetector(QWidget):
 
         total_files = len(self.source_files)
 
-        try:
-            for idx, file in enumerate(self.source_files):
+        for idx, file in enumerate(self.source_files):
+            try:
                 with Image.open(file) as img:
                     img = img.convert("RGB")
                     img_hash = str(imagehash.average_hash(img))
@@ -423,9 +434,10 @@ class DuplicateImagesDetector(QWidget):
                     progress = (idx + 1) / total_files * 100
                     progress_callback.emit(round(progress, 2))
 
-        except Exception as e:
-            print(f"Error processing {file}: {e}")
-            self.feedback_info_label.setText(f"Error processing {file}: {e}")
+            except Exception as e:
+                print(f"Error processing {file}: {e}")
+                self.feedback_info_label.setText(f"Error processing {file}: {e}")
+                continue
 
 
 
@@ -452,6 +464,7 @@ class DuplicateImagesDetector(QWidget):
             except Exception as e:
                 print(f"Error processing {file}: {e}")
                 self.feedback_info_label.setText(f"Error processing {file}: {e}")
+                continue
 
 
     @staticmethod
@@ -521,6 +534,36 @@ class DuplicateImagesDetector(QWidget):
     def update_progress_bar(self, value):
         #print(f"Updating progress bar: {value}")
         self.progress_bar.setValue(int(value))
+    # save current paths
+    def save_paths(self):
+        source_path = os.path.normpath(self.source_folder)
+        dest_path = os.path.normpath(self.dest_folder)
+
+        with open(self.settings_file, "w") as file:
+            json.dump({"source": source_path, "destination": dest_path}, file)
+
+    def check_folder_paths(self):
+
+        try:
+            with open(self.settings_file, "r") as file:
+                data = json.load(file)
+                # normalize path to avoid weird slashes configuration
+                self.source_folder = os.path.normpath(data.get("source", ""))
+                self.dest_folder = os.path.normpath(data.get("destination", ""))  # Default empty if not set
+
+                if os.path.exists(self.source_folder) and os.path.exists(self.dest_folder):
+                    self.source_info_label.setText(self.path_truncation(self.source_folder))
+                    self.source_info_label.setToolTip(self.source_folder)
+                    self.dest_info_label.setText(self.path_truncation(self.dest_folder))
+                    self.dest_info_label.setToolTip(self.dest_folder)
+                    self.set_method_group_status()
+
+        except FileNotFoundError:
+
+            with open(self.settings_file, "w") as file:
+                json.dump({"source": self.source_folder, "destination": self.dest_folder}, file)
+
+        # print(f"Default desktop path: {default_path}")
 
 
 if __name__ == "__main__":
