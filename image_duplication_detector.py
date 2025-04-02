@@ -58,10 +58,11 @@ class DuplicateImagesDetector(QWidget):
         # set window name and geometry
         self.settings_file = "settings.json"
         self.setWindowTitle("Duplicated Image Detector")
-        self.resize(400, 400)
+        self.resize(400, 420)
         self.setWindowIcon(QIcon("compare.ico"))
         self.setFixedSize(self.size())
         self.selected_method = "Exact Match"
+        self.move_method = "move all"
 
         self.source_folder = ""
         self.dest_folder = ""
@@ -116,6 +117,14 @@ class DuplicateImagesDetector(QWidget):
         self.dest_info_label.setToolTip("Selected target path")
         self.dest_info_layout.addWidget(self.dest_info_label)
 
+        # Move mode selection
+        self.move_mode_layout = QHBoxLayout()
+        self.move_all_radio = QRadioButton("Move all.")
+        self.move_all_but_one_radio = QRadioButton("Move all except one.")
+        self.move_mode_layout.addWidget(self.move_all_radio)
+        self.move_mode_layout.addWidget(self.move_all_but_one_radio)
+        self.move_all_radio.setChecked(True)
+
         # comparison method selection
         self.method_group = QGroupBox("Comparison Method") # group box for the radio buttons
         self.method_layout = QVBoxLayout()
@@ -155,6 +164,9 @@ class DuplicateImagesDetector(QWidget):
         self.master_layout.addLayout(self.source_info_layout)
         self.master_layout.addLayout(self.set_dest_layout)
         self.master_layout.addLayout(self.dest_info_layout)
+        # move method
+        self.master_layout.addLayout(self.move_mode_layout)
+
         # align master layout to top
         self.master_layout.addWidget(self.method_group)
         # add execute button to group layout
@@ -226,6 +238,10 @@ class DuplicateImagesDetector(QWidget):
         self.hashing_radio.toggled.connect(self.update_method)
         self.mean_color.toggled.connect(self.update_method)
 
+        # move method
+        self.move_all_radio.toggled.connect(self.update_move_method)
+        self.move_all_but_one_radio.toggled.connect(self.update_move_method)
+
 
     def update_method(self):
         if self.exact_match_radio.isChecked():
@@ -234,6 +250,15 @@ class DuplicateImagesDetector(QWidget):
             self.selected_method = "Perceptual Hashing"
         elif self.mean_color.isChecked():
             self.selected_method = "Mean Color"
+
+    def update_move_method(self):
+        if self.move_all_radio.isChecked():
+            self.move_method = "move all"
+            print(self.move_method)
+        elif self.move_all_but_one_radio.isChecked():
+            self.move_method = "move all but one"
+            print(self.move_method)
+
 
 
     def open_source_dir(self):
@@ -490,19 +515,23 @@ class DuplicateImagesDetector(QWidget):
     ####################################################################################################################
     def move_duplicates(self):
         print("move duplicates")
-        moved_files = []
-        moved_number = 0
+        # moved_files = []
+        # moved_number = 0
+        #
+        # for hash_value, files in self.img_hashes_dict.items():
+        #     if len(files) > 1:
+        #         self.duplicates_found = True
+        #         # KEEP ONE MOVE REST
+        #         for f in files[1:]:
+        #             if not os.path.commonpath([f, self.dest_folder]) == self.dest_folder:
+        #                 shutil.move(f, self.dest_folder)
+        #                 moved_number += 1
+        #                 moved_files.append(f)
 
-        for hash_value, files in self.img_hashes_dict.items():
-            if len(files) > 1:
-                self.duplicates_found = True
-                for f in files:
-                    if not os.path.commonpath([f, self.dest_folder]) == self.dest_folder:
-                        shutil.move(f, self.dest_folder)
-                        moved_number += 1
-                        moved_files.append(f)
+        moved_number, moved_files = self.perform_move()
 
         self.method_group.setEnabled(True)
+
         self.estimate_search_time()
 
         if not self.duplicates_found:
@@ -514,6 +543,36 @@ class DuplicateImagesDetector(QWidget):
             print(f"Moved the following files: {moved_files}")
             self.feedback_info_label.setText(f"{moved_number} duplicates found.")
             self.feedback_info_label.setStyleSheet("color: cyan; font-weight: bold;")
+
+
+    def perform_move(self):
+
+        moved_number = 0
+        moved_files = []
+
+        if self.move_method == "move all but one":
+
+            for hash_value, files in self.img_hashes_dict.items():
+                if len(files) > 1:
+                    self.duplicates_found = True
+
+                for f in files[1:]:
+                    if not os.path.commonpath([f, self.dest_folder]) == self.dest_folder:
+                        shutil.move(f, self.dest_folder)
+                        moved_number += 1
+                        moved_files.append(f)
+        else:
+
+            for hash_value, files in self.img_hashes_dict.items():
+                if len(files) > 1:
+                    self.duplicates_found = True
+                    for f in files:
+                        if not os.path.commonpath([f, self.dest_folder]) == self.dest_folder:
+                            shutil.move(f, self.dest_folder)
+                            moved_number += 1
+                            moved_files.append(f)
+
+        return moved_number, moved_files
 
 
     # calculate time for current search
